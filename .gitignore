@@ -1,0 +1,6 @@
+.plain/
+data*.js
+contracts.json
+fetch.log
+refresh.log
+__pycache__/
