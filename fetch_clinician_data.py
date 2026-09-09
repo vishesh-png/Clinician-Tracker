@@ -414,6 +414,52 @@ def is_doctor(name):
     return (name or "").strip().startswith("Dr")
 
 
+# ---- Doctor Profile tab ----
+
+PROFILE_QUERY = """SELECT TRIM(pro.name) AS doctor, pro.gender, pro.email, pro.phone_number,
+       json_serialize(pro.qualifications) AS qualifications,
+       json_serialize(pro.specializations) AS specializations,
+       json_serialize(pro.preferred_languages) AS languages,
+       TO_CHAR(pro.practice_start_date,'YYYY-MM-DD') AS practice_start,
+       TO_CHAR(pro.practice_start_date_at_allo,'YYYY-MM-DD') AS practice_start_allo,
+       pro.registration_number, pro.profile_image, pro.consultation_fee,
+       pro.employee_code, pro.working_state, pro.is_physician, pro.is_therapist,
+       pro.is_available, pro.is_accepting_new_patients,
+       json_serialize(pro.provider_bio) AS bio
+FROM allo_persons.providers pro
+WHERE pro.deleted_at IS NULL AND TRIM(pro.name) LIKE 'Dr%'
+ORDER BY 1"""
+
+# Tenure with Allo = days since the doctor's FIRST COMPLETED Screening Call.
+FIRST_SC_QUERY = """SELECT TRIM(pro.name) AS doctor,
+       TO_CHAR(MIN(DATEADD(minute,330,app.start_time)),'YYYY-MM-DD') AS first_sc
+FROM allo_consultations.appointments app
+JOIN allo_persons.providers pro ON app.provider_id = pro.id AND pro.deleted_at IS NULL
+JOIN allo_consultations.types typ ON app.type_id = typ.id
+WHERE app.deleted_at IS NULL AND app.status = 'COMPLETED' AND typ.name = 'Screening Call'
+GROUP BY 1"""
+
+
+def fetch_profiles():
+    """Write data_profiles.js — provider profiles + first-SC tenure. Regenerate
+    alone with: python3 -c 'import fetch_clinician_data as f; f.fetch_profiles()'"""
+    profiles = [r for r in (run_query("profiles", PROFILE_QUERY, soft=True) or []) if is_doctor(r[0])]
+    first_sc = [r for r in (run_query("first-sc", FIRST_SC_QUERY, soft=True) or []) if is_doctor(r[0])]
+    out = HERE / "data_profiles.js"
+    payload = {
+        "profile_columns": ["doctor", "gender", "email", "phone", "qualifications",
+                            "specializations", "languages", "practice_start",
+                            "practice_start_allo", "registration_number", "profile_image",
+                            "consultation_fee", "employee_code", "working_state",
+                            "is_physician", "is_therapist", "is_available",
+                            "is_accepting_new_patients", "bio"],
+        "profile_rows": profiles,
+        "first_sc_rows": first_sc,
+    }
+    out.write_text("window.CLINICIAN_PROFILES = " + json.dumps(payload, separators=(",", ":")) + ";\n")
+    sys.stderr.write(f"[profiles] {len(profiles)} profiles, {len(first_sc)} first-SC rows -> {out}\n")
+
+
 def fetch_slabs():
     """Write data_slabs.js — contract data for the earning engine: slab grids,
     minimum-guarantee windows, and mock-call payouts. Regenerate alone with:
@@ -452,6 +498,7 @@ def fetch_slabs():
 
 def main():
     fetch_slabs()
+    fetch_profiles()
     blocks = [r for r in run_query("blocks", BLOCKS_QUERY) if is_doctor(r[1])]
     appts = [r for r in run_query("appts", APPTS_QUERY) if is_doctor(r[1])]
     rev = [r for r in run_query("revenue", REV_QUERY) if is_doctor(r[1])]
