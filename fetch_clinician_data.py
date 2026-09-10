@@ -492,12 +492,18 @@ GROUP BY 1"""
 # Allo's own review standing, from the internal sync (authoritative — far better
 # than scraping): allo_health.external_reviews carries Google reviews per CLINIC
 # and Practo reviews per DOCTOR.
+# deleted_from_source_at = review pulled down on Google's side; those must not be
+# counted (they inflated Indiranagar by 48). NOTE the remaining count still runs
+# above Google's live figure (Indiranagar: 864 here vs 759 shown on Google) —
+# Google removes/filters reviews that our sync never flags, so treat this as
+# "reviews we ever synced and still believe live", not the live GMB counter.
 GMB_CLINIC_QUERY = """SELECT loc.city AS city, loc.locality AS locality,
-       COUNT(*) AS reviews, ROUND(AVG(er.rating::float), 2) AS rating
+       COUNT(DISTINCT er.platform_review_id) AS reviews,
+       ROUND(AVG(er.rating::float), 2) AS rating
 FROM allo_health.external_reviews er
 JOIN allo_health.locations loc ON er.reviewed_for_id = loc.id AND loc.deleted_at IS NULL
 WHERE er.deleted_at IS NULL AND er.platform = 'google' AND er.reviewed_for = 'clinic'
-  AND er.rating IS NOT NULL
+  AND er.rating IS NOT NULL AND er.deleted_from_source_at IS NULL
 GROUP BY 1, 2"""
 
 # Practo rows sync review TEXT only — no numeric rating is stored (Practo shows a
