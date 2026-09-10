@@ -436,29 +436,47 @@ FROM allo_persons.providers pro
 WHERE pro.deleted_at IS NULL AND TRIM(pro.name) LIKE 'Dr%'
 ORDER BY 1"""
 
-# Actual CURRENT consultation fee = the modal amount of the doctor's LAST 12
-# charged consults per channel (ties broken by recency). A recency window this
-# tight snaps to price changes within days (Dr. Vishal Gaurav 499 -> 699 on
-# 2026-09-02), which a 60-day mode missed; allo_consultations.prices and
-# providers.consultation_fee both carry stale defaults for many doctors.
+# Consultation fees, SH vs MH. Two sources, combined in fetch_profiles():
+# 1. allo_consultations.prices — authoritative where a live provider row exists
+#    (MH SC fees are per-doctor there: 499-1199; SH overrides like Dr. Vishal's
+#    699; the SH default is the global/location Rs 499 row) — but it does NOT
+#    cover everyone (e.g. doctors charging SH 999 have no row).
+# 2. Observed: modal amount of the doctor's last 12 charged consults per
+#    program-bucket x channel from the ledger — fills the gaps and tracks
+#    changes within days.
+PRICE_BOOK_QUERY = """SELECT TRIM(pro.name) AS doctor,
+       CASE WHEN p.program = 'mental_health' THEN 'mh' ELSE 'sh' END AS bucket,
+       CASE WHEN p.channel = 'slotFirst' OR loc.type = 'online' THEN 'online' ELSE 'offline' END AS ch,
+       p.selling_price/100.0 AS sell,
+       TO_CHAR(p.effective_from,'YYYY-MM-DD') AS ef,
+       (p.location_id IS NULL) AS generic
+FROM allo_consultations.prices p
+JOIN allo_consultations.types t ON p.consultation_type_id = t.id AND t.name = 'Screening Call'
+JOIN allo_persons.providers pro ON p.provider_id = pro.id
+LEFT JOIN allo_health.locations loc ON p.location_id = loc.id
+WHERE p.deleted_at IS NULL AND (p.effective_till IS NULL OR p.effective_till > GETDATE())"""
+
 SC_FEE_QUERY = """WITH recent AS (
   SELECT TRIM(pro.name) AS doctor,
+         CASE WHEN pp.program = 'mental_health' THEN 'mh' ELSE 'sh' END AS bucket,
          CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END AS ch,
          pp.transaction_amount/100.0 AS amt, pp.transaction_date,
          ROW_NUMBER() OVER (
-           PARTITION BY TRIM(pro.name), CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END
+           PARTITION BY TRIM(pro.name),
+             CASE WHEN pp.program = 'mental_health' THEN 'mh' ELSE 'sh' END,
+             CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END
            ORDER BY pp.transaction_date DESC) AS rn
   FROM allo_payable.provider_payout pp
   JOIN allo_persons.providers pro ON pp.provider_id = pro.id AND pro.deleted_at IS NULL
   LEFT JOIN allo_health.locations loc ON pp.location_id = loc.id
   WHERE pp.deleted_at IS NULL AND pp.payout_type = 'consultation'
     AND pp.transaction_type = 'credit' AND pp.transaction_amount > 0)
-SELECT doctor, ch, amt FROM (
-  SELECT doctor, ch, amt, COUNT(*) AS n, MAX(transaction_date) AS latest,
-         ROW_NUMBER() OVER (PARTITION BY doctor, ch
+SELECT doctor, bucket, ch, amt, n FROM (
+  SELECT doctor, bucket, ch, amt, COUNT(*) AS n, MAX(transaction_date) AS latest,
+         ROW_NUMBER() OVER (PARTITION BY doctor, bucket, ch
                             ORDER BY COUNT(*) DESC, MAX(transaction_date) DESC) AS r
   FROM recent WHERE rn <= 12
-  GROUP BY doctor, ch, amt
+  GROUP BY doctor, bucket, ch, amt
 ) WHERE r = 1"""
 
 # Tenure with Allo = days since the doctor's FIRST COMPLETED Screening Call.
@@ -476,8 +494,28 @@ def fetch_profiles():
     alone with: python3 -c 'import fetch_clinician_data as f; f.fetch_profiles()'"""
     profiles = [r for r in (run_query("profiles", PROFILE_QUERY, soft=True) or []) if is_doctor(r[0])]
     first_sc = [r for r in (run_query("first-sc", FIRST_SC_QUERY, soft=True) or []) if is_doctor(r[0])]
-    fees = [r[:2] + [int(float(r[2] or 0))]
-            for r in (run_query("sc-fees", SC_FEE_QUERY, soft=True) or []) if is_doctor(r[0])]
+
+    # fee resolution: price-book provider row wins (prefer generic over
+    # location-specific, latest effective_from); observed modal fills gaps;
+    # SH offline defaults to the global Rs 499 when a doctor has neither.
+    book = [r for r in (run_query("price-book", PRICE_BOOK_QUERY, soft=True) or []) if is_doctor(r[0])]
+    obs = [r for r in (run_query("sc-fees", SC_FEE_QUERY, soft=True) or []) if is_doctor(r[0])]
+    best_book = {}
+    for doctor, bucket, ch, sell, ef, generic in sorted(
+            book, key=lambda r: (str(r[4] or ""), bool(r[5]))):  # later ef wins; generic beats location at same ef
+        best_book[(doctor, bucket, ch)] = int(float(sell or 0))
+    best_obs = {}
+    for doctor, bucket, ch, amt, n in obs:
+        best_obs[(doctor, bucket, ch)] = int(float(amt or 0))
+    doctors = {r[0] for r in profiles}
+    fees = []  # [doctor, sh_off, mh_off, online]
+    for d in sorted(doctors):
+        sh = best_book.get((d, "sh", "offline")) or best_obs.get((d, "sh", "offline"))
+        mh = best_book.get((d, "mh", "offline")) or best_obs.get((d, "mh", "offline"))
+        online = best_book.get((d, "sh", "online")) or best_obs.get((d, "sh", "online")) \
+            or best_obs.get((d, "mh", "online"))
+        if sh or mh or online:
+            fees.append([d, sh, mh, online])
     out = HERE / "data_profiles.js"
     payload = {
         "profile_columns": ["doctor", "gender", "email", "phone", "qualifications",
@@ -488,7 +526,7 @@ def fetch_profiles():
                             "is_accepting_new_patients", "bio"],
         "profile_rows": profiles,
         "first_sc_rows": first_sc,
-        "fee_rows": fees,  # [doctor, offline|online, modal charged fee Rs, last 60d]
+        "fee_rows": fees,  # [doctor, sh_offline_fee, mh_offline_fee, online_fee] (Rs; null = n/a)
     }
     out.write_text("window.CLINICIAN_PROFILES = " + json.dumps(payload, separators=(",", ":")) + ";\n")
     sys.stderr.write(f"[profiles] {len(profiles)} profiles, {len(first_sc)} first-SC rows -> {out}\n")
