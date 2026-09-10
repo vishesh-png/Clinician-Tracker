@@ -432,24 +432,30 @@ FROM allo_persons.providers pro
 WHERE pro.deleted_at IS NULL AND TRIM(pro.name) LIKE 'Dr%'
 ORDER BY 1"""
 
-# Actual consultation fee = the most common non-zero charged amount in the last
-# 60 days from the payout ledger, per channel. providers.consultation_fee is a
-# stale global default (Rs 299 for everyone) — do not use it.
-SC_FEE_QUERY = """SELECT doctor, ch, amt FROM (
+# Actual CURRENT consultation fee = the modal amount of the doctor's LAST 12
+# charged consults per channel (ties broken by recency). A recency window this
+# tight snaps to price changes within days (Dr. Vishal Gaurav 499 -> 699 on
+# 2026-09-02), which a 60-day mode missed; allo_consultations.prices and
+# providers.consultation_fee both carry stale defaults for many doctors.
+SC_FEE_QUERY = """WITH recent AS (
   SELECT TRIM(pro.name) AS doctor,
          CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END AS ch,
-         pp.transaction_amount/100.0 AS amt, COUNT(*) AS n,
+         pp.transaction_amount/100.0 AS amt, pp.transaction_date,
          ROW_NUMBER() OVER (
            PARTITION BY TRIM(pro.name), CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END
-           ORDER BY COUNT(*) DESC) AS rn
+           ORDER BY pp.transaction_date DESC) AS rn
   FROM allo_payable.provider_payout pp
   JOIN allo_persons.providers pro ON pp.provider_id = pro.id AND pro.deleted_at IS NULL
   LEFT JOIN allo_health.locations loc ON pp.location_id = loc.id
   WHERE pp.deleted_at IS NULL AND pp.payout_type = 'consultation'
-    AND pp.transaction_type = 'credit' AND pp.transaction_amount > 0
-    AND pp.transaction_date >= DATEADD(day, -60, GETDATE())
-  GROUP BY 1, 2, 3
-) WHERE rn = 1"""
+    AND pp.transaction_type = 'credit' AND pp.transaction_amount > 0)
+SELECT doctor, ch, amt FROM (
+  SELECT doctor, ch, amt, COUNT(*) AS n, MAX(transaction_date) AS latest,
+         ROW_NUMBER() OVER (PARTITION BY doctor, ch
+                            ORDER BY COUNT(*) DESC, MAX(transaction_date) DESC) AS r
+  FROM recent WHERE rn <= 12
+  GROUP BY doctor, ch, amt
+) WHERE r = 1"""
 
 # Tenure with Allo = days since the doctor's FIRST COMPLETED Screening Call.
 FIRST_SC_QUERY = """SELECT TRIM(pro.name) AS doctor,
