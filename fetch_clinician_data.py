@@ -37,7 +37,9 @@ CLUSTER = "warehouse"
 DATABASE = "allo_prod"
 HERE = Path(__file__).resolve().parent
 
-START = "2026-01-01"  # IST window start
+# IST window start: rolling 12 full months back (the tracker shows m-12/w-24/d-30)
+_now = datetime.now()
+START = "%04d-%02d-01" % (_now.year - 1, _now.month)  # e.g. 2025-09-01 when run in Sep 2026
 
 CONSULT_TYPES = "('Screening Call','Follow Up','Report Reading','Patient Queries')"
 
