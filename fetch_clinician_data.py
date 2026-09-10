@@ -211,14 +211,18 @@ WHERE pp.deleted_at IS NULL
 GROUP BY 1,2,3,4,5,6,7
 ORDER BY 1,2,3,4"""
 
-# Fee-split clauses for the 0%-slab contracts: fixed_call_fee % of consult
-# revenue scoped by program, fixed_rx_fee % of Rx value scoped by SC-vs-repeat.
-# PERCENT amounts are percent x 100 (4000 = 40%).
+# Fee-split clauses: fixed_call_fee % of consult revenue (by program) and
+# fixed_rx_fee % of Rx value (by SC-vs-repeat). PERCENT amounts are percent x 100
+# (4000 = 40%). location_ids matters: clauses scoped to the virtual/online
+# location (c7d8c9d2-…) carve the ONLINE business out of a slab contract —
+# slab applies to offline only, online pays these %s (validated: Dr. Mansi
+# Patel Jan'26 needs slab(offline) + 20% x online, not slab(total)).
 FEES_QUERY = """SELECT TRIM(pro.name) AS doctor,
        TO_CHAR(cc.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(cc.valid_till,'YYYY-MM-DD') AS vt,
        cc.type, cc.amount, cc.commission_unit,
        json_serialize(cc.consultation_types) AS ctypes,
-       json_serialize(cc.programs) AS progs
+       json_serialize(cc.programs) AS progs,
+       json_serialize(cc.location_ids) AS locs
 FROM allo_payable.consultation_clause cc
 JOIN allo_payable.payout_contracts pc ON cc.contract_id = pc.id
      AND pc.deleted_at IS NULL AND pc.status = 'approved'
@@ -508,13 +512,13 @@ def fetch_slabs():
     mock = run_query("mock-calls", MOCK_QUERY, soft=True) or []
     mock_rows = [r[:4] + [int(float(r[4] or 0))] for r in mock if is_doctor(r[1])]
     fees = run_query("fee-clauses", FEES_QUERY, soft=True) or []
-    fee_rows = [r[:4] + [float(r[4] or 0), r[5], r[6], r[7]] for r in fees if is_doctor(r[0])]
+    fee_rows = [r[:4] + [float(r[4] or 0), r[5], r[6], r[7], r[8]] for r in fees if is_doctor(r[0])]
     out = HERE / "data_slabs.js"
     payload = {
         "slab_columns": ["doctor", "valid_from", "valid_till", "start_rs", "end_rs", "pct"],
         "slab_rows": slab_rows,
         "fee_columns": ["doctor", "valid_from", "valid_till", "type", "amount", "unit",
-                        "ctypes", "progs"],
+                        "ctypes", "progs", "locs"],
         "fee_rows": fee_rows,
         "mg_columns": ["doctor", "valid_from", "valid_till", "amount_rs",
                        "min_hours", "expected_hours", "cushion_hours"],
