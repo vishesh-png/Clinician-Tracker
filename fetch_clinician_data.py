@@ -489,6 +489,47 @@ WHERE app.deleted_at IS NULL AND app.status = 'COMPLETED' AND typ.name = 'Screen
 GROUP BY 1"""
 
 
+# Allo's own review standing, from the internal sync (authoritative — far better
+# than scraping): allo_health.external_reviews carries Google reviews per CLINIC
+# and Practo reviews per DOCTOR.
+GMB_CLINIC_QUERY = """SELECT loc.city AS city, loc.locality AS locality,
+       COUNT(*) AS reviews, ROUND(AVG(er.rating::float), 2) AS rating
+FROM allo_health.external_reviews er
+JOIN allo_health.locations loc ON er.reviewed_for_id = loc.id AND loc.deleted_at IS NULL
+WHERE er.deleted_at IS NULL AND er.platform = 'google' AND er.reviewed_for = 'clinic'
+  AND er.rating IS NOT NULL
+GROUP BY 1, 2"""
+
+# Practo rows sync review TEXT only — no numeric rating is stored (Practo shows a
+# % recommend, not stars), so this is a review-count signal per doctor.
+PRACTO_DOCTOR_QUERY = """SELECT TRIM(pro.name) AS doctor,
+       COUNT(*) AS reviews, ROUND(AVG(er.rating::float), 2) AS rating
+FROM allo_health.external_reviews er
+JOIN allo_persons.providers pro ON er.reviewed_for_id = pro.id AND pro.deleted_at IS NULL
+WHERE er.deleted_at IS NULL AND er.platform = 'practo'
+GROUP BY 1"""
+
+
+def fetch_reviews():
+    """Write data_reviews.js — Allo's own GMB (per clinic) + Practo (per doctor)
+    standing. Regenerate alone:
+    python3 -c 'import fetch_clinician_data as f; f.fetch_reviews()'"""
+    gmb = run_query("gmb-clinic", GMB_CLINIC_QUERY, soft=True) or []
+    practo = run_query("practo-doctor", PRACTO_DOCTOR_QUERY, soft=True) or []
+    gmb_rows = [[r[0], r[1], int(r[2] or 0), float(r[3] or 0)] for r in gmb if r[0] and r[1]]
+    practo_rows = [[r[0], int(r[1] or 0), float(r[2] or 0)]
+                   for r in practo if is_doctor(r[0])]
+    out = HERE / "data_reviews.js"
+    payload = {
+        "gmb_columns": ["city", "locality", "reviews", "rating"],
+        "gmb_rows": gmb_rows,
+        "practo_columns": ["doctor", "reviews", "rating"],
+        "practo_rows": practo_rows,
+    }
+    out.write_text("window.CLINICIAN_REVIEWS = " + json.dumps(payload, separators=(",", ":")) + ";\n")
+    sys.stderr.write(f"[reviews] {len(gmb_rows)} clinics (GMB), {len(practo_rows)} doctors (Practo) -> {out}\n")
+
+
 def fetch_profiles():
     """Write data_profiles.js — provider profiles + first-SC tenure. Regenerate
     alone with: python3 -c 'import fetch_clinician_data as f; f.fetch_profiles()'"""
@@ -571,6 +612,7 @@ def fetch_slabs():
 def main():
     fetch_slabs()
     fetch_profiles()
+    fetch_reviews()
     blocks = [r for r in run_query("blocks", BLOCKS_QUERY) if is_doctor(r[1])]
     appts = [r for r in run_query("appts", APPTS_QUERY) if is_doctor(r[1])]
     rev = [r for r in run_query("revenue", REV_QUERY) if is_doctor(r[1])]
