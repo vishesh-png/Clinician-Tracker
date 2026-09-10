@@ -432,6 +432,25 @@ FROM allo_persons.providers pro
 WHERE pro.deleted_at IS NULL AND TRIM(pro.name) LIKE 'Dr%'
 ORDER BY 1"""
 
+# Actual consultation fee = the most common non-zero charged amount in the last
+# 60 days from the payout ledger, per channel. providers.consultation_fee is a
+# stale global default (Rs 299 for everyone) — do not use it.
+SC_FEE_QUERY = """SELECT doctor, ch, amt FROM (
+  SELECT TRIM(pro.name) AS doctor,
+         CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END AS ch,
+         pp.transaction_amount/100.0 AS amt, COUNT(*) AS n,
+         ROW_NUMBER() OVER (
+           PARTITION BY TRIM(pro.name), CASE WHEN loc.type='offline' THEN 'offline' ELSE 'online' END
+           ORDER BY COUNT(*) DESC) AS rn
+  FROM allo_payable.provider_payout pp
+  JOIN allo_persons.providers pro ON pp.provider_id = pro.id AND pro.deleted_at IS NULL
+  LEFT JOIN allo_health.locations loc ON pp.location_id = loc.id
+  WHERE pp.deleted_at IS NULL AND pp.payout_type = 'consultation'
+    AND pp.transaction_type = 'credit' AND pp.transaction_amount > 0
+    AND pp.transaction_date >= DATEADD(day, -60, GETDATE())
+  GROUP BY 1, 2, 3
+) WHERE rn = 1"""
+
 # Tenure with Allo = days since the doctor's FIRST COMPLETED Screening Call.
 FIRST_SC_QUERY = """SELECT TRIM(pro.name) AS doctor,
        TO_CHAR(MIN(DATEADD(minute,330,app.start_time)),'YYYY-MM-DD') AS first_sc
@@ -447,6 +466,8 @@ def fetch_profiles():
     alone with: python3 -c 'import fetch_clinician_data as f; f.fetch_profiles()'"""
     profiles = [r for r in (run_query("profiles", PROFILE_QUERY, soft=True) or []) if is_doctor(r[0])]
     first_sc = [r for r in (run_query("first-sc", FIRST_SC_QUERY, soft=True) or []) if is_doctor(r[0])]
+    fees = [r[:2] + [int(float(r[2] or 0))]
+            for r in (run_query("sc-fees", SC_FEE_QUERY, soft=True) or []) if is_doctor(r[0])]
     out = HERE / "data_profiles.js"
     payload = {
         "profile_columns": ["doctor", "gender", "email", "phone", "qualifications",
@@ -457,6 +478,7 @@ def fetch_profiles():
                             "is_accepting_new_patients", "bio"],
         "profile_rows": profiles,
         "first_sc_rows": first_sc,
+        "fee_rows": fees,  # [doctor, offline|online, modal charged fee Rs, last 60d]
     }
     out.write_text("window.CLINICIAN_PROFILES = " + json.dumps(payload, separators=(",", ":")) + ";\n")
     sys.stderr.write(f"[profiles] {len(profiles)} profiles, {len(first_sc)} first-SC rows -> {out}\n")
