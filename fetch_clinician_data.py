@@ -435,14 +435,14 @@ def is_doctor(name):
 
 # ---- Doctor Profile tab ----
 
-PROFILE_QUERY = """SELECT TRIM(pro.name) AS doctor, pro.gender, pro.email, pro.phone_number,
+PROFILE_QUERY = """SELECT TRIM(pro.name) AS doctor, pro.gender,
        json_serialize(pro.qualifications) AS qualifications,
        json_serialize(pro.specializations) AS specializations,
        json_serialize(pro.preferred_languages) AS languages,
        TO_CHAR(pro.practice_start_date,'YYYY-MM-DD') AS practice_start,
        TO_CHAR(pro.practice_start_date_at_allo,'YYYY-MM-DD') AS practice_start_allo,
-       pro.registration_number, pro.profile_image, pro.consultation_fee,
-       pro.employee_code, pro.working_state, pro.is_physician, pro.is_therapist,
+       pro.profile_image, pro.consultation_fee,
+       pro.working_state, pro.is_physician, pro.is_therapist,
        pro.is_available, pro.is_accepting_new_patients,
        json_serialize(pro.provider_bio) AS bio
 FROM allo_persons.providers pro
@@ -578,10 +578,12 @@ def fetch_profiles():
             fees.append([d, sh, mh, online])
     out = HERE / "data_profiles.js"
     payload = {
-        "profile_columns": ["doctor", "gender", "email", "phone", "qualifications",
+        # contact details / registration ids are deliberately NOT fetched — the
+        # tracker does not display them and they should not sit in the artifact
+        "profile_columns": ["doctor", "gender", "qualifications",
                             "specializations", "languages", "practice_start",
-                            "practice_start_allo", "registration_number", "profile_image",
-                            "consultation_fee", "employee_code", "working_state",
+                            "practice_start_allo", "profile_image",
+                            "consultation_fee", "working_state",
                             "is_physician", "is_therapist", "is_available",
                             "is_accepting_new_patients", "bio"],
         "profile_rows": profiles,
