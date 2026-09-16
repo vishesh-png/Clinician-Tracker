@@ -227,7 +227,7 @@ FROM allo_payable.consultation_clause cc
 JOIN allo_payable.payout_contracts pc ON cc.contract_id = pc.id
      AND pc.deleted_at IS NULL AND pc.status = 'approved'
 JOIN allo_persons.providers pro ON pc.provider_id = pro.id
-WHERE cc.deleted_at IS NULL AND cc.type IN ('fixed_call_fee','fixed_rx_fee')
+WHERE cc.deleted_at IS NULL
 ORDER BY 1, 2"""
 
 # Slab grids per doctor, flattened to [doctor, valid_from, valid_till, start_rs,
