@@ -415,9 +415,16 @@ def run_query(label, sql, soft=False):
     return rows
 
 
+# "Dr"-prefixed providers who are actually therapists (providers.is_therapist=1
+# with is_physician=0) — they carry a doctorate but do not run consultations,
+# so they must not appear in the doctor tracker.
+THERAPIST_NAMES = {"Dr. Mahi Khandelwal"}
+
+
 def is_doctor(name):
     # doctors only — therapists/counsellors are "Mr."/"Ms." providers
-    return (name or "").strip().startswith("Dr")
+    nm = (name or "").strip()
+    return nm.startswith("Dr") and nm not in THERAPIST_NAMES
 
 
 # ---- Doctor Profile tab ----
