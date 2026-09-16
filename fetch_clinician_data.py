@@ -202,7 +202,8 @@ EARN_QUERY = f"""SELECT
     CASE WHEN pp.appointment_type_id = 'cd02525c-1528-4047-a12c-1ad526c28c9a'
          THEN 'sc' ELSE 'rpt' END AS link,
     ROUND(SUM(CASE WHEN pp.transaction_type='credit' THEN pp.transaction_amount
-                   ELSE -pp.transaction_amount END) / 100.0) AS amount
+                   ELSE -pp.transaction_amount END) / 100.0) AS amount,
+    SUM(CASE WHEN pp.transaction_type='credit' THEN 1 ELSE -1 END) AS n
 FROM allo_payable.provider_payout pp
 JOIN allo_persons.providers pro ON pp.provider_id = pro.id AND pro.deleted_at IS NULL
 LEFT JOIN allo_health.locations loc ON pp.location_id = loc.id
@@ -291,18 +292,21 @@ ORDER BY 1, 2"""
 
 # Mock-call payout: the non_clinical ledger rows carry only a quantity (amount 0);
 # the money is the doctor's mock_call clause rate (paise PER_ITEM) x quantity.
-MOCK_QUERY = f"""WITH rated AS (
+# Non-clinical payouts: Mock Call, Mental Health Payout, Interview, Ad Shoot,
+# Program Design, Research, Arrears. provider_payout.transaction_amount is 0 for
+# these — the money lives in non_clinical_clause.rate (paise), and the rate is
+# often set PER MONTH (Dr. Sandhiya's MH payout differs every month), so the
+# clause window must contain the transaction date, not merely be the latest.
+NONCLIN_QUERY = f"""WITH rated AS (
   SELECT pp.id, pp.transaction_date, pp.provider_id, pp.location_id, pp.transaction_type,
          COALESCE(pp.non_clinical_quantity, 1) AS qty, nc.rate,
          ROW_NUMBER() OVER (PARTITION BY pp.id ORDER BY nc.valid_from DESC) rn
   FROM allo_payable.provider_payout pp
-  JOIN allo_payable.non_clinical_clause_type nct
-       ON pp.non_clinical_type_id = nct.id AND nct.code = 'mock_call'
   JOIN allo_payable.payout_contracts pc ON pc.provider_id = pp.provider_id
        AND pc.deleted_at IS NULL AND pc.status = 'approved'
-       AND pp.transaction_date >= pc.valid_from AND pp.transaction_date < pc.valid_till
   JOIN allo_payable.non_clinical_clause nc ON nc.contract_id = pc.id
-       AND nc.clause_type_id = nct.id AND nc.deleted_at IS NULL
+       AND nc.clause_type_id = pp.non_clinical_type_id AND nc.deleted_at IS NULL
+       AND pp.transaction_date >= nc.valid_from AND pp.transaction_date <= nc.valid_till
   WHERE pp.deleted_at IS NULL AND pp.payout_type = 'non_clinical'
     AND DATEADD(minute,330,pp.transaction_date) >= DATE '{START}')
 SELECT TO_CHAR(DATEADD(minute,330,r.transaction_date),'YYYY-MM-DD') AS dt,
@@ -601,7 +605,7 @@ def fetch_slabs():
         got = run_query(label, q, soft=True)
         if got:
             mg_rows += [r[:3] + [float(x or 0) for x in r[3:7]] for r in got if is_doctor(r[0])]
-    mock = run_query("mock-calls", MOCK_QUERY, soft=True) or []
+    mock = run_query("non-clinical", NONCLIN_QUERY, soft=True) or []
     mock_rows = [r[:4] + [int(float(r[4] or 0))] for r in mock if is_doctor(r[1])]
     fees = run_query("fee-clauses", FEES_QUERY, soft=True) or []
     fee_rows = [r[:4] + [float(r[4] or 0), r[5], r[6], r[7], r[8]] for r in fees if is_doctor(r[0])]
@@ -659,7 +663,7 @@ def main():
         "rev_rows": rev,
         # earn amounts are net rupees (credits − debits, paise/100)
         "earn_columns": ["dt", "doctor", "city", "locality", "payout_type",
-                         "program", "link", "amount"],
+                         "program", "link", "amount", "n"],
         "earn_rows": earn or [],
     }
     out = HERE / "data.js"
