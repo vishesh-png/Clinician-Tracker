@@ -300,13 +300,15 @@ ORDER BY 1, 2"""
 NONCLIN_QUERY = f"""WITH rated AS (
   SELECT pp.id, pp.transaction_date, pp.provider_id, pp.location_id, pp.transaction_type,
          COALESCE(pp.non_clinical_quantity, 1) AS qty, nc.rate,
-         ROW_NUMBER() OVER (PARTITION BY pp.id ORDER BY nc.valid_from DESC) rn
+         ROW_NUMBER() OVER (PARTITION BY pp.id ORDER BY
+           CASE WHEN pp.transaction_date >= nc.valid_from
+                 AND pp.transaction_date <= nc.valid_till THEN 0 ELSE 1 END,
+           ABS(DATEDIFF(day, pp.transaction_date, nc.valid_from))) rn
   FROM allo_payable.provider_payout pp
   JOIN allo_payable.payout_contracts pc ON pc.provider_id = pp.provider_id
        AND pc.deleted_at IS NULL AND pc.status = 'approved'
   JOIN allo_payable.non_clinical_clause nc ON nc.contract_id = pc.id
        AND nc.clause_type_id = pp.non_clinical_type_id AND nc.deleted_at IS NULL
-       AND pp.transaction_date >= nc.valid_from AND pp.transaction_date <= nc.valid_till
   WHERE pp.deleted_at IS NULL AND pp.payout_type = 'non_clinical'
     AND DATEADD(minute,330,pp.transaction_date) >= DATE '{START}')
 SELECT TO_CHAR(DATEADD(minute,330,r.transaction_date),'YYYY-MM-DD') AS dt,
