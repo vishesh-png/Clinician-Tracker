@@ -218,7 +218,7 @@ ORDER BY 1,2,3,4"""
 # slab applies to offline only, online pays these %s (validated: Dr. Mansi
 # Patel Jan'26 needs slab(offline) + 20% x online, not slab(total)).
 FEES_QUERY = """SELECT TRIM(pro.name) AS doctor,
-       TO_CHAR(cc.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(cc.valid_till,'YYYY-MM-DD') AS vt,
+       TO_CHAR(DATEADD(minute,330,cc.valid_from),'YYYY-MM-DD') AS vf, TO_CHAR(DATEADD(minute,330,cc.valid_till),'YYYY-MM-DD') AS vt,
        cc.type, cc.amount, cc.commission_unit,
        json_serialize(cc.consultation_types) AS ctypes,
        json_serialize(cc.programs) AS progs,
@@ -238,7 +238,7 @@ ORDER BY 1, 2"""
 # beats the minimum guarantee take it (+ additional MG), else take the MG;
 # then add mock-call payout (non_clinical rate x quantity).
 SLABS_QUERY = """SELECT TRIM(pro.name) AS doctor,
-       TO_CHAR(pc.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(pc.valid_till,'YYYY-MM-DD') AS vt,
+       TO_CHAR(DATEADD(minute,330,pc.valid_from),'YYYY-MM-DD') AS vf, TO_CHAR(DATEADD(minute,330,pc.valid_till),'YYYY-MM-DD') AS vt,
        sc.range_start/100.0 AS start_rs, sc.range_end/100.0 AS end_rs,
        CAST(sc.commission AS FLOAT) AS pct
 FROM allo_payable.slab_clause sc
@@ -251,7 +251,7 @@ ORDER BY 1, 2, 4"""
 # Old fixed_percentage regime: one flat revenue-share % embedded in the
 # subcontracts JSON -> same shape as a single 0..inf slab.
 FIXED_PCT_QUERY = """SELECT TRIM(pro.name) AS doctor,
-       TO_CHAR(pc.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(pc.valid_till,'YYYY-MM-DD') AS vt,
+       TO_CHAR(DATEADD(minute,330,pc.valid_from),'YYYY-MM-DD') AS vf, TO_CHAR(DATEADD(minute,330,pc.valid_till),'YYYY-MM-DD') AS vt,
        0.0 AS start_rs, NULL AS end_rs,
        CAST(pc.subcontracts[0]."revenueShareClause"."general" AS FLOAT) AS pct
 FROM allo_payable.payout_contracts pc
@@ -266,7 +266,7 @@ ORDER BY 1, 2"""
 # hours -> full MG; cushion <= net < min -> MG - (min - net) x rate; net <
 # cushion -> net x rate.
 MG_QUERY = """SELECT TRIM(pro.name) AS doctor,
-       TO_CHAR(mg.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(mg.valid_till,'YYYY-MM-DD') AS vt,
+       TO_CHAR(DATEADD(minute,330,mg.valid_from),'YYYY-MM-DD') AS vf, TO_CHAR(DATEADD(minute,330,mg.valid_till),'YYYY-MM-DD') AS vt,
        mg.amount/100.0 AS amount_rs,
        mg.minimum_working_hours, mg.expected_working_hours, mg.cushion_cutoff_hours
 FROM allo_payable.min_guarantee_clause mg
@@ -278,7 +278,7 @@ ORDER BY 1, 2"""
 
 # Old-regime fixed MG embedded in subcontracts JSON.
 MG_FIXED_QUERY = """SELECT TRIM(pro.name) AS doctor,
-       TO_CHAR(pc.valid_from,'YYYY-MM-DD') AS vf, TO_CHAR(pc.valid_till,'YYYY-MM-DD') AS vt,
+       TO_CHAR(DATEADD(minute,330,pc.valid_from),'YYYY-MM-DD') AS vf, TO_CHAR(DATEADD(minute,330,pc.valid_till),'YYYY-MM-DD') AS vt,
        CAST(pc.subcontracts[0]."minimumGurantee" AS FLOAT)/100.0 AS amount_rs,
        CAST(pc.subcontracts[0]."minimumWorkingHours" AS FLOAT) AS min_h,
        CAST(pc.subcontracts[0]."expectedWorkingHours" AS FLOAT) AS exp_h,
@@ -318,8 +318,8 @@ GROUP BY 1,2,3,4
 ORDER BY 1,2"""
 
 CONTRACTS_QUERY = """SELECT pc.id, TRIM(pro.name) AS doctor, pc.regime, pc.status,
-       TO_CHAR(pc.valid_from,'YYYY-MM-DD') AS valid_from,
-       TO_CHAR(pc.valid_till,'YYYY-MM-DD') AS valid_till,
+       TO_CHAR(DATEADD(minute,330,pc.valid_from),'YYYY-MM-DD') AS valid_from,
+       TO_CHAR(DATEADD(minute,330,pc.valid_till),'YYYY-MM-DD') AS valid_till,
        json_serialize(pc.subcontracts) AS subcontracts
 FROM allo_payable.payout_contracts pc
 JOIN allo_persons.providers pro ON pc.provider_id = pro.id
@@ -327,8 +327,8 @@ WHERE pc.deleted_at IS NULL
 ORDER BY 2,5"""
 
 CONSULT_CLAUSE_QUERY = """SELECT cc.contract_id, cc.type, cc.amount, cc.commission_unit,
-       TO_CHAR(cc.valid_from,'YYYY-MM-DD') AS valid_from,
-       TO_CHAR(cc.valid_till,'YYYY-MM-DD') AS valid_till,
+       TO_CHAR(DATEADD(minute,330,cc.valid_from),'YYYY-MM-DD') AS valid_from,
+       TO_CHAR(DATEADD(minute,330,cc.valid_till),'YYYY-MM-DD') AS valid_till,
        json_serialize(cc.consultation_types) AS consultation_types,
        json_serialize(cc.programs) AS programs,
        json_serialize(cc.location_ids) AS location_ids
