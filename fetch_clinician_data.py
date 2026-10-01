@@ -199,8 +199,12 @@ EARN_QUERY = f"""SELECT
     COALESCE(CASE WHEN loc.type='offline' THEN loc.locality END,'Online') AS locality,
     pp.payout_type,
     COALESCE(pp.program,'sexual_health') AS program,
-    CASE WHEN pp.appointment_type_id = 'cd02525c-1528-4047-a12c-1ad526c28c9a'
-         THEN 'sc' ELSE 'rpt' END AS link,
+    -- counselling is its own clause scope (contracts price it separately from
+    -- screening calls and repeats — Dr. Adithya's Aug'26 clauses, 28 Sep 2026)
+    CASE WHEN pp.appointment_type_id = 'cd02525c-1528-4047-a12c-1ad526c28c9a' THEN 'sc'
+         WHEN pp.appointment_type_id IN ('fe5b19b4-5961-4036-bc5f-fb1009a27d64',
+                                         'f6b2c9d4-5a71-4e3b-9c08-2d94e17a6b3c') THEN 'counsel'
+         ELSE 'rpt' END AS link,
     ROUND(SUM(CASE WHEN pp.transaction_type='credit' THEN pp.transaction_amount
                    ELSE -pp.transaction_amount END) / 100.0) AS amount,
     SUM(CASE WHEN pp.transaction_type='credit' THEN 1 ELSE -1 END) AS n
