@@ -647,7 +647,10 @@ def main():
     contracts = None
     if earning_available:
         # ROUND() returns numeric, which the Data API serializes as a string
-        earn = [r[:7] + [int(float(r[7] or 0))] for r in earn if is_doctor(r[1])]
+        # keep BOTH the amount and the transaction count (n): the count drives
+        # the flat per-call online-SC fee, and dropping it silently zeroes it
+        earn = [r[:7] + [int(float(r[7] or 0)), int(float(r[8] or 0))]
+                for r in earn if is_doctor(r[1])]
         contracts = {
             "contracts": run_query("contracts", CONTRACTS_QUERY, soft=True),
             "consultation_clauses": run_query("consult-clauses", CONSULT_CLAUSE_QUERY, soft=True),
