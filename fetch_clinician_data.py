@@ -149,6 +149,23 @@ cons_link AS (
         FROM allo_consultations.consultations
         WHERE deleted_at IS NULL AND estimate_item_id IS NOT NULL
     ) WHERE rn = 1
+),
+-- Since 2026-10-22 billing creates SEPARATE estimates per item type (drug /
+-- lab / consultation) for one encounter and links ONE payment to all of them
+-- in estimate_payments. Joining payments to estimate_payments raw therefore
+-- counts such a payment 2-3x. Pick ONE estimate per payment (prefer a paid /
+-- partly_paid / refunded one, then newest), dropping superseded estimates.
+ep1 AS (
+    SELECT payment_id, estimate_id
+    FROM (
+        SELECT ep.payment_id, ep.estimate_id,
+               ROW_NUMBER() OVER (PARTITION BY ep.payment_id ORDER BY
+                   CASE WHEN est.status IN ('paid','partly_paid','refunded') THEN 0 ELSE 1 END,
+                   est.created_at DESC, ep.estimate_id) rn
+        FROM allo_billing.estimate_payments ep
+        JOIN allo_billing.estimates est ON est.id = ep.estimate_id
+        WHERE est.status <> 'superseded'
+    ) WHERE rn = 1
 )
 SELECT
     TO_CHAR(p.created_at + INTERVAL '5.5 hours','YYYY-MM-DD') AS dt,
@@ -161,7 +178,7 @@ SELECT
              CASE WHEN cal.type='offline' THEN cal.locality END, 'Online') AS locality,
     ROUND(SUM(p.amount) / 100) AS revenue
 FROM allo_health.payments p
-    LEFT JOIN allo_billing.estimate_payments epay ON epay.payment_id = p.id
+    LEFT JOIN ep1 epay ON epay.payment_id = p.id
     LEFT JOIN allo_billing.estimates i ON i.id = epay.estimate_id AND i.deleted_at IS NULL
     LEFT JOIN allo_encounters.encounters e ON i.encounter_id = e.id AND e.deleted_at IS NULL
     LEFT JOIN allo_consultations.appointments app ON e.appointment_id = app.id AND app.deleted_at IS NULL
